@@ -195,6 +195,10 @@ Another approach we could take is similar to the ASan and TSan `nosanitize` attr
 
 # Other considerations
 
+## Supported systems
+
+Currently RTSan works on amd64 and x86_64 processors on Mac and Linux OSs. We are exploring supporting Windows, and there is no limitation (other than dev resources) to supporting more processors. If this support gets added in the future, Rust would again get it "for free".
+
 ## Additional functions marked `#[blocking]`
 
 There are presumably more functions we should mark blocking in the Rust standard library, but we propose starting small and giving it a try with `Mutex::lock`. It is the hope that most of the libc interceptors will cover most other use cases and we can add them as necessary.

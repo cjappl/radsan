@@ -6,7 +6,7 @@ This RFC proposes that RealtimeSanitizer be integrated into the Rust ecosystem. 
 
 1. RealtimeSanitizer can be enabled in unstable mode - like the other sanitizers
 2. The introduction of `nonblocking` (marking a function as real-time constrained) and `blocking` (marking a function as inappropriate for use in a `nonblocking` context)
-3. The addition of the `blocking` attribute to `Mutex::lock` 
+3. The addition of the `blocking` attribute to `std::sync::Mutex::lock` and `std::sync::RwLock::lock`
 4. The addition of the `rtsan_scoped_disabler!` macro
 
 # The problem space
@@ -26,7 +26,7 @@ Code in these environments must run in a deterministic amount of time. Allocatio
 A few resources that go into more depth on real-time programming:
 * https://en.wikipedia.org/wiki/Real-time_computing
 * http://www.rossbencina.com/code/real-time-audio-programming-101-time-waits-for-nothing
-* ??????? TODO: Something rust specific?????????
+* https://www.youtube.com/watch?v=ndeN983j_GQ
 
 # RealtimeSanitizer 
 
@@ -36,7 +36,7 @@ A few resources that go into more depth on real-time programming:
 In clang, a function marked `[[clang::nonblocking]]` is the restricted execution context.  **In these `nonblocking` functions, two broad sets of actions are disallowed:**
 ## 1. Intercepted calls into libc, such as `malloc`, `socket`, `write`, `pthread_mutex_*` and many more
 
-Each of these actions are non-deterministic time. When these actions occur during a `[[clang::nonblocking]]` function, or any function invoked by this function, they print the stack and abort.
+Each of these actions are known to have non-deterministic execution time. When these actions occur during a `[[clang::nonblocking]]` function, or any function invoked by this function, they print the stack and abort.
 
 [Example of this working in Compiler Explorer](https://godbolt.org/z/sPTh63o67).
 
@@ -48,7 +48,7 @@ The `[[clang::blocking]]` attribute allows users to mark a function as unsafe fo
 
 [Example of this working in Compiler Explorer](https://godbolt.org/z/dErqE5nnM)
 
-One classic example of this is a spinlock `lock` method. Spin locks do not call into a `pthread_mutex_lock`, so they cannot be intercepted. They are still prone to spinning indefinitely, so they are unsafe in real-time contexts. This includes `Mutex::lock`, which we will discuss more in a bit.
+One classic example of this is a spin-lock `lock` method. Spin locks do not call into a `pthread_mutex_lock`, so they cannot be intercepted. They are still prone to spinning indefinitely, so they are unsafe in real-time contexts. This includes `std::sync::Mutex::lock`, which we will discuss more in a bit.
 
 # Rust
 
@@ -71,8 +71,6 @@ Much of the heavy lifting in this tool is done in the LLVM IR and runtime librar
 `#[nonblocking]` defines a scope as real-time constrained. During this scope, one cannot call any intercepted call (`malloc`, `socket` etc) or call any function marked `#[blocking]`.
 
 `#[blocking]` defines a function as unfit for execution within a `#[nonblocking]` function.
-
-Example:
 
 ```rust
 > cat example/src/main.rs
@@ -147,22 +145,15 @@ fish: Job 1, 'cargo run --package example --f…' terminated by signal SIGABRT (
 
 ```
 
-## 3. The addition of `blocking` to `Mutex::lock` 
+## 3. The addition of `blocking` to `std::sync::Mutex::lock` and `std::sync::RwLock::lock`
 
 As stated in the previous section, many of the interceptors "just work". Often, the Rust runtime will call into the libc runtime to allocate memory (`malloc` et al), interface with the networking stack (`socket` et al) or do I/O (`read`, `write`, `open`, `close` et al).
 
-One place where this is not the case is `Mutex::lock`. Locks are disallowed in real-time contexts but because `Mutex::lock` begins as a spin-lock, the RTsan runtime cannot automatically detect its usage.
+A couple places where this is not the case is `std::sync::Mutex::lock` and `std::sync::RwLock::lock`. Locks are disallowed in real-time contexts but because these methods do not call in to `pthread_mutex_lock` initially, the RTsan runtime cannot automatically detect its usage.
 
 To fix this, we propose adding the `#[blocking]` attribute to this method in the rust standard library. 
 
 With these three points integrated, RTSan would be functional and available for use in the Rust ecosystem.
-
-
-**TODO:** 
-* **Are attributes inheritable on interfaces?**
-* **do we make it a requirement of all lock types?**
-* **What other details can we provide here??**
-* **Are there other obvious ones we want to add this attribute to?**
 
 ## 4. The addition of the `rtsan_scoped_disabler!` macro
 
@@ -190,8 +181,10 @@ call-stack-contains:*spin*
 > RTSAN_OPTIONS=suppressions=suppressions.supp cargo run
 ```
 
-### nosanitize
-Another approach we could take is similar to the ASan and TSan `nosanitize` attribute. We advocate for the scoped disabler macro, as it allows users to specify a more specific scope to disable the tool in. This means users will not have to extract unsafe code into helper functions to disable them at the function level.
+### `no_sanitize`
+Another approach we could take is similar to the ASan and TSan `no_sanitize` attribute. We advocate for the scoped disabler macro, as it allows users to specify a more specific scope to disable the tool in. This means users will not have to extract unsafe code into helper functions to disable them at the function level.
+
+To match the other sanitizers, adding in `no_sanitize` could be considered instead of/in addition to the macro, depending on input on this RFC.
 
 # Other considerations
 
@@ -201,7 +194,7 @@ Currently RTSan works on amd64 and x86_64 processors on Mac and Linux OSs. We ar
 
 ## Additional functions marked `#[blocking]`
 
-There are presumably more functions we should mark blocking in the Rust standard library, but we propose starting small and giving it a try with `Mutex::lock`. It is the hope that most of the libc interceptors will cover most other use cases and we can add them as necessary.
+There are presumably more functions we should mark blocking in the Rust standard library, but we propose starting small and giving it a try with `std::sync::Mutex::lock`. It is the hope that most of the libc interceptors will cover most other use cases and we can add them as necessary.
 
 ## The names of the attributes
 
@@ -224,12 +217,13 @@ We have seen a solid amount of industry support from big companies in:
 
 In presenting this tool at CppCon and AudioDevCon, we have been asked "When is it coming to Rust?" more times than I can remember. 
 
+# Open questions
+* Should we support `no_sanitize`, `rtsan_scoped_disabler`, or both?
+* Are there other methods in the standard library deserving of the `#[blocking]` attribute?
+
 # Conclusion
 
 We hope to get approval for integrating RealtimeSanitizer into the Rust ecosystem. With this tool accessible, writing real-time safe code in Rust will be safer and easier than ever before. Looking forward to any feedback and discussions.
 
 Thanks for considering,
 Chris, David, and Stephan
-
-
-

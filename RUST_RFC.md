@@ -2,12 +2,13 @@
 
 Many software projects that utilize Rust are subject to real-time constraints. Software that is written for use in audio, embedded, robotics, and aerospace must adhere to strict deterministic-time execution or face consequences that may be catastrophic. LLVM 20 introduces RealtimeSanitizer a novel approach that detects and reports disallowed non-deterministic execution time calls in real-time contexts.
 
-This RFC proposes that RealtimeSanitizer be integrated into the Rust ecosystem. To serve that end, we propose 4 changes, outlined in this document:
+This RFC proposes that RealtimeSanitizer be integrated into the Rust ecosystem. To serve that end, we propose a few changes, outlined in this document:
 
 1. RealtimeSanitizer can be enabled in unstable mode - like the other sanitizers
 2. The introduction of `nonblocking` (marking a function as real-time constrained) and `blocking` (marking a function as inappropriate for use in a `nonblocking` context)
 3. The addition of the `blocking` attribute to `std::sync::Mutex::lock` and `std::sync::RwLock::lock`
 4. The addition of the `rtsan_scoped_disabler!` macro
+5. Disabling rtsan for the `panic!` and `assert*!` macros
 
 # The problem space
 
@@ -15,13 +16,13 @@ Increasingly, Rust is being used in problem spaces that are real-time constraine
 
 For example:
 
-> In an autonomous vehicle perception subsystem, it is not enough to detect a red light. You must detect a red light AND pass it along in N ms, or the car may not stop. This may lead to an accident.
+> In an autonomous vehicle perception subsystem, it is not enough to detect an obstacle and decide to stop in some unknown amount of time. You must detect the obstacle AND stop within N ms, or you may crash.
 
 > In audio, you must fill a buffer and pass it back to the operating system within N ms, otherwise your user may hear a click or pop which may damage their audio equipment, or minimally annoy them.
 
 > In aerospace guidance systems if your software doesn't update on a regular tick your simulation of what is happening may diverge from reality. Unfortunately this may also mean your rocket converges with the ground.
 
-Code in these environments must run in a deterministic amount of time. Allocations, locks, and other OS resource access are disallowed because they don't have bound upper execution time. Unbound execution time leads to blown deadlines, and blown deadlines leads to consequences.
+Code in these environments must run in a deterministic amount of time. Allocations, locks, and other OS resource access are disallowed because they don't have bound upper execution time.
 
 A few resources that go into more depth on real-time programming:
 * https://en.wikipedia.org/wiki/Real-time_computing
@@ -185,6 +186,34 @@ call-stack-contains:*spin*
 Another approach we could take is similar to the ASan and TSan `no_sanitize` attribute. We advocate for the scoped disabler macro, as it allows users to specify a more specific scope to disable the tool in. This means users will not have to extract unsafe code into helper functions to disable them at the function level.
 
 To match the other sanitizers, adding in `no_sanitize` could be considered instead of/in addition to the macro, depending on input on this RFC.
+
+## 5. Disabling RealtimeSanitizer in the `panic!` and all `assert!` macros.
+
+If users rely on `panic!` or `assert!` while running under RealtimeSanitizer, they will hit an intercepted call before the message is printed.
+
+For example:
+
+```rust
+#[nonblocking]
+fn processor(buffer: &[f32]) {
+    buffer[512]; // Oops, out of bounds!! should panic!
+}
+
+processor(&[0.0; 512]);
+```
+
+Running under RTSan the user gets this message. This is due to some memory being allocated to prepare to print the panic message.
+```
+==31969==ERROR: RealtimeSanitizer: unsafe-library-call
+Intercepted call to real-time unsafe function `malloc` in real-time context!
+```
+
+A user should expect this out of bounds access to print:
+```
+index out of bounds: the len is 512 but the index is 512
+```
+
+To adhere to this expected behavior, RTSan should be disabled for `panic!` and each of the assertion macros: `assert`, `assert_eq`, `assert_ne`, `debug_assert`, `debug_assert_eq`, `debug_assert_ne`.
 
 # Other considerations
 

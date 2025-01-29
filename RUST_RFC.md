@@ -47,7 +47,7 @@ The `[[clang::blocking]]` attribute allows users to mark a function as unsafe fo
 
 [Example of this working in Compiler Explorer](https://godbolt.org/z/dErqE5nnM)
 
-One classic example of this is a spin-lock `lock` method. Spin locks do not call into a `pthread_mutex_lock`, so they cannot be intercepted. They are still prone to spinning indefinitely, so they are unsafe in real-time contexts. This includes `std::sync::Mutex::lock`, which we will discuss more in a bit.
+One classic example of this is a spin-lock `lock` method. Spin locks do not call into a `pthread_mutex_lock`, so they cannot be intercepted. They are still prone to spinning indefinitely, so they are unsafe in real-time contexts.
 
 # Rust
 

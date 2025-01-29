@@ -152,9 +152,9 @@ We propose addition of the `rtsan_scoped_disabler!` macro:
 ```rust
 #[nonblocking]
 fn process() {
-    rtsan_scoped_disabler!(
+  rtsan_scoped_disabler!({
         let audio = vec![1.0; 256]; // report is suppressed
-    )
+  });
 }
 ```
 
